@@ -152,11 +152,89 @@ func parseOutboundURL(u string) (*core.OutboundHandlerConfig, error) {
 	addr := net.NewIPOrDomain(net.ParseAddress(up.Hostname()))
 	uport := uint32(port)
 
+	seccfg, err := createSecurityConfig(q)
+	if err != nil {
+		return nil, err
+	}
+
+	transport := "raw"
+	if len(q["type"]) > 0 {
+		transport = q["type"][0]
+	}
+	transSettings, err := createTransportConfig(transport, q)
+	if err != nil {
+		return nil, err
+	}
+
+	proxySettings, err := createProxySettings(up, addr, uport)
+	if err != nil {
+		return nil, err
+	}
+
+	outbound := core.OutboundHandlerConfig{
+		SenderSettings: serial.ToTypedMessage(&proxyman.SenderConfig{
+			StreamSettings: &internet.StreamConfig{
+				SecurityType:     seccfg.Type,
+				ProtocolName:     transport,
+				Address:          addr,
+				Port:             uport,
+				SecuritySettings: []*serial.TypedMessage{seccfg},
+				TransportSettings: []*internet.TransportConfig{{
+					ProtocolName: transport,
+					Settings:     transSettings}},
+			},
+		}),
+		ProxySettings: proxySettings}
+	return &outbound, nil
+}
+
+func createProxySettings(up *url.URL, addr *net.IPOrDomain, uport uint32) (*serial.TypedMessage, error) {
+	var cfg *serial.TypedMessage
+	switch up.Scheme {
+	case "vless":
+		cfg = serial.ToTypedMessage(&vlessOut.Config{
+			Vnext: &protocol.ServerEndpoint{
+				Address: addr,
+				Port:    uport,
+				User: &protocol.User{
+					Account: serial.ToTypedMessage(&vless.Account{
+						Id: up.User.Username(),
+					}),
+				},
+			},
+		})
+	default:
+		return nil, fmt.Errorf("Unknown scheme %s", up.Scheme)
+	}
+	return cfg, nil
+}
+
+func createTransportConfig(transport string, q url.Values) (*serial.TypedMessage, error) {
+	multiMode := len(q["mode"]) > 0 && q["mode"][0] == "multi"
+	var cfg *serial.TypedMessage
+	switch transport {
+	case "raw":
+		cfg = serial.ToTypedMessage(&tcp.Config{})
+	case "grpc":
+		rpc := grpc.Config{
+			MultiMode: multiMode,
+		}
+		if len(q["serviceName"]) > 0 {
+			rpc.ServiceName = q["serviceName"][0]
+		}
+		cfg = serial.ToTypedMessage(&rpc)
+	default:
+		return nil, fmt.Errorf("Unknown transport %s", transport)
+	}
+	return cfg, nil
+}
+
+func createSecurityConfig(q url.Values) (*serial.TypedMessage, error) {
 	security := ""
 	if len(q["security"]) > 0 {
 		security = q["security"][0]
 	}
-	var seccfg *serial.TypedMessage
+	var cfg *serial.TypedMessage
 	switch security {
 	case "reality":
 		pbk, err := base64.RawURLEncoding.DecodeString(q["pbk"][0])
@@ -175,68 +253,14 @@ func parseOutboundURL(u string) (*core.OutboundHandlerConfig, error) {
 		if len(q["fp"]) > 0 {
 			fp = q["fp"][0]
 		}
-		seccfg = serial.ToTypedMessage(&reality.Config{
+		cfg = serial.ToTypedMessage(&reality.Config{
 			PublicKey:   pbk,
 			Fingerprint: fp,
 			ShortId:     sid,
 			ServerName:  q["sni"][0],
 		})
-	case "":
-		seccfg = nil
 	default:
-		return nil, fmt.Errorf("Unknown security %s", security)
+		return nil, fmt.Errorf("Unknown security \"%s\"", security)
 	}
-
-	multiMode := len(q["mode"]) > 0 && q["mode"][0] == "multi"
-	transport := "raw"
-	if len(q["type"]) > 0 {
-		transport = q["type"][0]
-	}
-	var transSettings *serial.TypedMessage
-	switch transport {
-	case "raw":
-		transSettings = serial.ToTypedMessage(&tcp.Config{})
-	case "grpc":
-		cfg := grpc.Config{
-			MultiMode: multiMode,
-		}
-		if len(q["serviceName"]) > 0 {
-			cfg.ServiceName = q["serviceName"][0]
-		}
-		transSettings = serial.ToTypedMessage(&cfg)
-	default:
-		return nil, fmt.Errorf("Unknown transport %s", transport)
-	}
-	var proxySettings *serial.TypedMessage
-	switch up.Scheme {
-	case "vless":
-		proxySettings = serial.ToTypedMessage(&vlessOut.Config{
-			Vnext: &protocol.ServerEndpoint{
-				Address: addr,
-				Port:    uport,
-				User: &protocol.User{
-					Account: serial.ToTypedMessage(&vless.Account{
-						Id: up.User.Username(),
-					}),
-				},
-			},
-		})
-	default:
-		return nil, fmt.Errorf("Unknown protocol %s", transport)
-	}
-	outbound := core.OutboundHandlerConfig{
-		SenderSettings: serial.ToTypedMessage(&proxyman.SenderConfig{
-			StreamSettings: &internet.StreamConfig{
-				SecurityType:     seccfg.Type,
-				ProtocolName:     transport,
-				Address:          addr,
-				Port:             uport,
-				SecuritySettings: []*serial.TypedMessage{seccfg},
-				TransportSettings: []*internet.TransportConfig{{
-					ProtocolName: transport,
-					Settings:     transSettings}},
-			},
-		}),
-		ProxySettings: proxySettings}
-	return &outbound, nil
+	return cfg, nil
 }
