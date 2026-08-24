@@ -1,14 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"bufio"
 	"net/http"
 
 	"github.com/meanwhile131/auto-v2ray/parse"
@@ -32,28 +30,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer resp.Body.Close()
-	scanner := bufio.NewScanner(resp.Body)
-	outbounds := make([]*core.OutboundHandlerConfig, 0)
-	i := 0
-	for scanner.Scan() {
-		line := scanner.Text()
-		if len(line) == 0 {
-			continue
-		}
-		if line[0] == '#' {
-			continue
-		}
-		outbound, err := parse.OutboundURL(line)
-		if err != nil {
-			log.Printf("Failed to parse %s: %s", line, err)
-			continue
-		}
-		outbound.Tag = fmt.Sprintf("out%d", i)
-		outbounds = append(outbounds, outbound)
-		i++
-	}
-	log.Printf("Collected %d outbounds", len(outbounds))
-	err = scanner.Err()
+	outbounds, err := parse.URLFile(resp.Body)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -100,7 +77,7 @@ func main() {
 			serial.ToTypedMessage(&burst.Config{
 				SubjectSelector: []string{"out"},
 				PingConfig: &burst.HealthPingConfig{
-					Interval:   int64(10 * time.Minute),
+					Interval: int64(10 * time.Minute),
 				},
 			}),
 		},

@@ -1,9 +1,11 @@
 package parse
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"strconv"
@@ -21,6 +23,34 @@ import (
 	"github.com/xtls/xray-core/transport/internet/reality"
 	"github.com/xtls/xray-core/transport/internet/tcp"
 )
+
+func URLFile(body io.Reader) ([]*core.OutboundHandlerConfig, error) {
+	scanner := bufio.NewScanner(body)
+	outbounds := make([]*core.OutboundHandlerConfig, 0)
+	i := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(line) == 0 {
+			continue
+		}
+		if line[0] == '#' {
+			continue
+		}
+		outbound, err := OutboundURL(line)
+		if err != nil {
+			log.Printf("Failed to parse %s: %s", line, err)
+			continue
+		}
+		outbound.Tag = fmt.Sprintf("out%d", i)
+		outbounds = append(outbounds, outbound)
+		i++
+	}
+	err := scanner.Err()
+	if err != nil {
+		return nil, err
+	}
+	return outbounds, nil
+}
 
 func OutboundURL(u string) (*core.OutboundHandlerConfig, error) {
 	log.Printf("%s", u)
