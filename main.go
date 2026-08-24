@@ -101,7 +101,6 @@ func main() {
 				SubjectSelector: []string{"out"},
 				PingConfig: &burst.HealthPingConfig{
 					Interval:   int64(10 * time.Minute),
-					HttpMethod: "GET",
 				},
 			}),
 		},
