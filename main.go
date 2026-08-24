@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -42,8 +43,12 @@ type RawFieldRule struct {
 }
 
 func main() {
-	u := os.Args[1]
-	resp, err := http.Get(u)
+	u := flag.String("url", "", "URL with config share links")
+	flag.Parse()
+	if *u == "" {
+		log.Fatal("URL is required")
+	}
+	resp, err := http.Get(*u)
 	if err != nil {
 		log.Fatal(err)
 	}
