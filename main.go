@@ -41,15 +41,6 @@ type RawFieldRule struct {
 	Webhook    *conf.WebhookRuleConfig `json:"webhook"`
 }
 
-type healthCheckSettings struct {
-	Destination   string            `json:"destination"`
-	Connectivity  string            `json:"connectivity"`
-	Interval      duration.Duration `json:"interval"`
-	SamplingCount int               `json:"sampling"`
-	Timeout       duration.Duration `json:"timeout"`
-	HttpMethod    string            `json:"httpMethod"`
-}
-
 func main() {
 	u := os.Args[1]
 	resp, err := http.Get(u)
