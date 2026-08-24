@@ -14,10 +14,11 @@ import (
 	"net/http"
 
 	"github.com/xtls/libxray/share"
+	"github.com/xtls/xray-core/app/observatory/burst"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf"
-	"github.com/xtls/xray-core/infra/conf/cfgcommon/duration"
 	_ "github.com/xtls/xray-core/main/distro/all"
 )
 
@@ -44,6 +45,8 @@ type RawFieldRule struct {
 
 func main() {
 	u := flag.String("url", "", "URL with config share links")
+	socks := flag.Bool("socks", true, "Run socks proxy")
+	tun := flag.Bool("tun", false, "Use TUN (requires root)")
 	flag.Parse()
 	if *u == "" {
 		log.Fatal("URL is required")
@@ -70,19 +73,40 @@ func main() {
 		Tag:      "freedom",
 		Protocol: "freedom",
 	})
-	config.InboundConfigs = append(config.InboundConfigs, conf.InboundDetourConfig{
-		PortList: &conf.PortList{Range: []conf.PortRange{{
-			From: 9000,
-			To:   9000,
-		}}},
-		Protocol: "socks",
-		Tag:      "in",
-		ListenOn: &conf.Address{Address: net.ParseAddress("127.0.0.1")}},
-	)
+	if *socks {
+		config.InboundConfigs = append(config.InboundConfigs, conf.InboundDetourConfig{
+			PortList: &conf.PortList{Range: []conf.PortRange{{
+				From: 9000,
+				To:   9000,
+			}}},
+			Protocol: "socks",
+			Tag:      "in_socks",
+			ListenOn: &conf.Address{Address: net.ParseAddress("127.0.0.1")}},
+		)
+	}
+	if *tun {
+		inf := "auto"
+		settings := &conf.TunConfig{
+			Gateway:                []string{"10.0.0.1/16", "fc00::1/64"},
+			DNS:                    []string{"1.1.1.1"},
+			AutoSystemRoutingTable: []string{"0.0.0.0/0"},
+			AutoOutboundsInterface: &inf,
+		}
+		js, err := json.Marshal(settings)
+		if err != nil {
+			log.Fatal(err)
+		}
+		msg := json.RawMessage(js)
+		config.InboundConfigs = append(config.InboundConfigs, conf.InboundDetourConfig{
+			Protocol: "tun",
+			Settings: &msg,
+			Tag:      "in_tun",
+		})
+	}
 
 	route := RawFieldRule{
 		BalancerTag: "balancer",
-		InboundTag:  &conf.StringList{"in"},
+		InboundTag:  &conf.StringList{"in_socks", "in_tun"},
 	}
 	routeJson, err := json.Marshal(route)
 	if err != nil {
@@ -91,24 +115,24 @@ func main() {
 	config.RouterConfig = &conf.RouterConfig{
 		RuleList: []json.RawMessage{routeJson},
 		Balancers: []*conf.BalancingRule{{
-			Tag: "balancer",
+			Tag:         "balancer",
+			FallbackTag: "freedom",
 			Strategy: conf.StrategyConfig{
 				Type: "leastload",
 			},
 			Selectors: conf.StringList{"out"},
 		}},
 	}
-	config.Observatory = &conf.ObservatoryConfig{
-		SubjectSelector:   []string{"out"},
-		ProbeURL:          "https://www.google.com/generate_204",
-		ProbeInterval:     duration.Duration(10 * time.Minute),
-		EnableConcurrency: true,
-	}
-
 	cfg, err := config.Build()
 	if err != nil {
 		log.Fatal(err)
 	}
+	cfg.App = append(cfg.App, serial.ToTypedMessage(&burst.Config{
+		SubjectSelector: []string{"out"},
+		PingConfig: &burst.HealthPingConfig{
+			Interval: int64(10 * time.Minute),
+		},
+	}))
 	in, err := core.New(cfg)
 	if err != nil {
 		log.Fatal(err)
