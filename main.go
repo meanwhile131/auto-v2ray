@@ -47,6 +47,8 @@ func main() {
 	u := flag.String("url", "", "URL with config share links")
 	socks := flag.Bool("socks", true, "Run socks proxy")
 	tun := flag.Bool("tun", false, "Use TUN (requires root)")
+	strategy := flag.String("strategy", "leastping", "Strategy for selecting proxy")
+	freedom_fallback := flag.Bool("fallback", true, "Route traffic directly to internet if no proxy is available")
 	flag.Parse()
 	if *u == "" {
 		log.Fatal("URL is required")
@@ -69,10 +71,7 @@ func main() {
 		config.OutboundConfigs[i].Tag = fmt.Sprintf("out%d", i)
 		config.OutboundConfigs[i].SendThrough = nil
 	}
-	config.OutboundConfigs = append(config.OutboundConfigs, conf.OutboundDetourConfig{
-		Tag:      "freedom",
-		Protocol: "freedom",
-	})
+
 	if *socks {
 		config.InboundConfigs = append(config.InboundConfigs, conf.InboundDetourConfig{
 			PortList: &conf.PortList{Range: []conf.PortRange{{
@@ -112,16 +111,23 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	balancer := conf.BalancingRule{
+		Tag: "balancer",
+		Strategy: conf.StrategyConfig{
+			Type: *strategy,
+		},
+		Selectors: conf.StringList{"out"},
+	}
+	if *freedom_fallback {
+		config.OutboundConfigs = append(config.OutboundConfigs, conf.OutboundDetourConfig{
+			Tag:      "freedom",
+			Protocol: "freedom",
+		})
+		balancer.FallbackTag = "freedom"
+	}
 	config.RouterConfig = &conf.RouterConfig{
-		RuleList: []json.RawMessage{routeJson},
-		Balancers: []*conf.BalancingRule{{
-			Tag:         "balancer",
-			FallbackTag: "freedom",
-			Strategy: conf.StrategyConfig{
-				Type: "leastload",
-			},
-			Selectors: conf.StringList{"out"},
-		}},
+		RuleList:  []json.RawMessage{routeJson},
+		Balancers: []*conf.BalancingRule{&balancer},
 	}
 	cfg, err := config.Build()
 	if err != nil {
